@@ -153,7 +153,7 @@ const MUSIC_SETTLED_GAIN = 0.25;
 const MUSIC_RESTORE_MS = 900;
 const DEPARTURE_PAN_EXTRA_SEC = 2;
 const MIN_DEPARTURE_FADE_SEC = 0.75;
-const JOURNEY_END_MS = 5000;
+const JOURNEY_END_MS = 10000;
 const MIN_END_PLAYBACK_RATE = 0.06;
 const CITY_VIDEO_AUDIO_FULL_MS = 10000;
 const CITY_VIDEO_AUDIO_FADE_MS = 2000;
@@ -470,14 +470,14 @@ function stopMusicNow() {
   musicCity = null;
 }
 
-// Start a city's track (fades in). Triggered when the tunnel->city arrival
-// transition STARTS (and on back-navigation directly into a city).
+// Start a city's track. Triggered when the tunnel->city arrival transition
+// STARTS (and on back-navigation directly into a city).
 function musicStart(cityKey, entrance = "normal") {
   const ctx = getAudioContext();
   if (!ctx) return;
   unlockAudio();
   if (musicCity === cityKey && musicSource) return; // already playing this city's track
-  const instantStart = cityKey === "karachi" && entrance === "normal";
+  const instantStart = (cityKey === "karachi" && entrance === "normal") || entrance === "arrival";
   stopMusicNow();
   musicCity = cityKey;
   const requestId = ++musicRequestId;
@@ -640,6 +640,7 @@ function wipeTo(el, onDone, outgoingIndex = segIndex) {
     blurbar.style.left = (x - BAR/2) + "px";
     updateTransitionAudio(old, el, t);
     if (isDeparture(outgoingIndex)) musicDepartureEnvelope(departureEnvelopeProgress(outgoingIndex, old));
+    if (isArrival(segIndex) && Number(el.dataset.segIndex) === segIndex) musicArrivalEnvelope(segmentProgress(segIndex, el));
     if (t < 1) requestAnimationFrame(frame);
     else {
       blurbar.style.display = "none";
@@ -710,7 +711,8 @@ function endJourney() {
   const start = performance.now();
   function frame(now) {
     const t = clamp01((now - start) / JOURNEY_END_MS);
-    const rate = Math.max(MIN_END_PLAYBACK_RATE, startRate * (1 - t));
+    const easedSlowdown = t * t * t;
+    const rate = Math.max(MIN_END_PLAYBACK_RATE, startRate * (1 - easedSlowdown));
     try { el.playbackRate = rate; } catch(e) {}
     if (t < 1) {
       requestAnimationFrame(frame);
