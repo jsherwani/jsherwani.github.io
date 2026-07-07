@@ -151,6 +151,8 @@ const DEPARTURE_PAN_EXTRA_SEC = 2;
 const MIN_DEPARTURE_FADE_SEC = 0.75;
 const JOURNEY_END_MS = 5000;
 const MIN_END_PLAYBACK_RATE = 0.06;
+const CITY_VIDEO_AUDIO_FULL_MS = 10000;
+const CITY_VIDEO_AUDIO_FADE_MS = 2000;
 const IS_IOS_WEBKIT = (
   /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
@@ -187,6 +189,21 @@ function departureEnvelopeProgress(i, el) {
 
 const preloadedVideos = {};
 let forceMutedVideos = false;
+let cityVideoAudioVisit = null;
+
+function beginCityVideoAudio(i) {
+  if (!segs[i] || segs[i].type !== "city") return;
+  cityVideoAudioVisit = { segIndex: i, startedAt: performance.now() };
+}
+
+function cityVideoAudioEnvelope(el) {
+  const i = Number(el.dataset.segIndex);
+  if (!segs[i] || segs[i].type !== "city") return 1;
+  if (!cityVideoAudioVisit || cityVideoAudioVisit.segIndex !== i) return 0;
+  const elapsed = performance.now() - cityVideoAudioVisit.startedAt;
+  if (elapsed <= CITY_VIDEO_AUDIO_FULL_MS) return 1;
+  return 1 - clamp01((elapsed - CITY_VIDEO_AUDIO_FULL_MS) / CITY_VIDEO_AUDIO_FADE_MS);
+}
 
 function preloadVideos() {
   const host = document.getElementById("preloadHost");
@@ -249,31 +266,35 @@ function setMediaVolume(el, value) {
   el.volume = clamp01(value);
 }
 
+function setVideoLayerVolume(el, value) {
+  setMediaVolume(el, value * cityVideoAudioEnvelope(el));
+}
+
 function updateTransitionAudio(old, incoming, t) {
   t = clamp01(t);
   if (!hasMobileSafariAudioHandoff(incoming)) {
-    setMediaVolume(incoming, t);
-    setMediaVolume(old, 1 - t);
+    setVideoLayerVolume(incoming, t);
+    setVideoLayerVolume(old, 1 - t);
     return;
   }
 
   if (t < 0.5) {
     old.muted = forceMutedVideos;
-    setMediaVolume(old, 1 - t / 0.5);
+    setVideoLayerVolume(old, 1 - t / 0.5);
     incoming.muted = true;
-    setMediaVolume(incoming, 0);
+    setVideoLayerVolume(incoming, 0);
   } else {
-    setMediaVolume(old, 0);
+    setVideoLayerVolume(old, 0);
     old.muted = true;
     incoming.muted = forceMutedVideos;
-    setMediaVolume(incoming, (t - 0.5) / 0.5);
+    setVideoLayerVolume(incoming, (t - 0.5) / 0.5);
   }
 }
 
 function finishTransitionAudio(old, incoming) {
   delete incoming.dataset.mobileSafariAudioHandoff;
-  setMediaVolume(old, 1);
-  setMediaVolume(incoming, 1);
+  setVideoLayerVolume(old, 1);
+  setVideoLayerVolume(incoming, 1);
   old.muted = forceMutedVideos;
   incoming.muted = forceMutedVideos;
 }
@@ -547,6 +568,7 @@ function load(el, i) {
   el.onended = null;
   el.loop = false;
   el.playbackRate = 1;
+  el.dataset.segIndex = i;
   el.src = clipUrl(segs[i].clip);
   const t = trimOf(i).start || 0;
   if (t > 0) {
@@ -625,6 +647,7 @@ function wipeToSegment(i) {
   const outgoingIndex = segIndex;
   if (isArrival(outgoingIndex) && i !== outgoingIndex) musicArrivalEnvelope(1);
   segIndex = i;
+  if (segs[i].type === "city") beginCityVideoAudio(i);
   const el = idle();
   load(el, i);
   playVideo(el);
@@ -664,6 +687,7 @@ function goForward() {
   if (busy) return;
   if (mode === "start") {
     mode = "playing";
+    beginCityVideoAudio(segIndex);
     playVideo(cur());
     updateHud();
     musicStart(segs[0].clip);
@@ -696,6 +720,7 @@ function goBack() {
   mode = "playing";
   musicStop();
   segIndex = target;
+  beginCityVideoAudio(segIndex);
   const el = idle();
   load(el, segIndex);
   playVideo(el);
@@ -730,6 +755,7 @@ function paintProgress() {
   let frac = 0;
   let musicFrac = 0;
   let arrivalFrac = 0;
+  if (!busy && mode !== "start") setVideoLayerVolume(el, 1);
   if (mode !== "start" && el.duration && isFinite(el.duration)) {
     frac = segmentProgress(segIndex, el);
     if (isDeparture(segIndex)) {
