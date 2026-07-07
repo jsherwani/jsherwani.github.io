@@ -768,8 +768,9 @@ function paintProgress() {
   let frac = 0;
   let musicFrac = 0;
   let arrivalFrac = 0;
+  const activeMatchesSegment = Number(el.dataset.segIndex) === segIndex;
   if (!busy && mode !== "start") setVideoLayerVolume(el, 1);
-  if (mode !== "start" && el.duration && isFinite(el.duration)) {
+  if (mode !== "start" && activeMatchesSegment && el.duration && isFinite(el.duration)) {
     frac = segmentProgress(segIndex, el);
     if (isDeparture(segIndex)) {
       musicFrac = departureEnvelopeProgress(segIndex, el);
@@ -779,8 +780,8 @@ function paintProgress() {
   }
   const d = dotEls[segIndex];
   if (d) d.firstChild.style.width = (d.classList.contains("done") ? 100 : frac * 100) + "%";
-  if (isDeparture(segIndex) && mode === "playing") musicDepartureEnvelope(musicFrac);
-  if (isArrival(segIndex) && mode === "playing") musicArrivalEnvelope(arrivalFrac);
+  if (!busy && activeMatchesSegment && isDeparture(segIndex) && mode === "playing") musicDepartureEnvelope(musicFrac);
+  if (!busy && activeMatchesSegment && isArrival(segIndex) && mode === "playing") musicArrivalEnvelope(arrivalFrac);
   requestAnimationFrame(paintProgress);
 }
 
