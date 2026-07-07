@@ -67,7 +67,7 @@
 </div>
 <div id="tweaks">
   <h2>Clip trims &amp; music (Tab to close)</h2>
-  <p>Seconds chopped off the start / end of each clip; city rows also take an MP3 path whose audio fades in when the city starts and fades out as the train enters the tunnel. Copy the JSON and send it back to hardcode.</p>
+  <p>Seconds chopped off the start / end of each clip; city rows also take an MP3 URL whose audio fades in when the city starts and fades out as the train enters the tunnel. Copy the JSON and send it back to hardcode.</p>
   <div id="clipRows"></div>
   <button id="copyBtn">Copy JSON</button><span id="copied"></span>
 </div>
@@ -117,10 +117,10 @@ const trims = {
 
 // baked-in city music defaults
 const music = {
-  karachi: "mp3/karachi.mp3",
-  hawaii:  "mp3/hawaii.mp3",
-  sf:      "mp3/sf.mp3",
-  lisbon:  "mp3/lisbon.mp3",
+  karachi: "https://www.dropbox.com/scl/fi/rogqre39ngr8cbazaqh6v/karachi.mp3?rlkey=fsmorgdasxalq7z2uhb6vi777&raw=1",
+  hawaii:  "https://www.dropbox.com/scl/fi/z7b0czfwa13leah81udny/hawaii.mp3?rlkey=0iceeoiy7zhi459lyic0caws9&raw=1",
+  sf:      "https://www.dropbox.com/scl/fi/v6kjzx1w5h2yw4d1lh7dl/sf.mp3?rlkey=15t8gccma3qu22qv7xkn9o37x&raw=1",
+  lisbon:  "https://www.dropbox.com/scl/fi/ldwhwt93oe8c318mxh8rg/lisbon.mp3?rlkey=yzenqrhgtyfvb2aoy0ekd8ap2&raw=1",
 };
 
 const v = [document.getElementById("v0"), document.getElementById("v1")];
@@ -684,7 +684,7 @@ clipOrder.forEach((key) => {
   row.innerHTML = `<div class="nm">${c.label}</div>
     <label>start <input type="number" min="0" step="0.1" value="${trims[key].start}" data-k="${key}" data-f="start"></label>
     <label>end <input type="number" min="0" step="0.1" value="${trims[key].end}" data-k="${key}" data-f="end"></label>`
-    + (isCity ? `<input class="music" type="text" placeholder="MP3 path for ${c.label} music" value="${music[key] || ""}" data-mk="${key}">` : "");
+    + (isCity ? `<input class="music" type="text" placeholder="MP3 URL for ${c.label} music" value="${music[key] || ""}" data-mk="${key}">` : "");
   rowsEl.appendChild(row);
 });
 rowsEl.addEventListener("input", (e) => {
