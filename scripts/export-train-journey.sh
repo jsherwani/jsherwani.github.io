@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 URL="${TRAIN_CAPTURE_URL:-http://localhost:8000/}"
-DURATION="${TRAIN_CAPTURE_SECONDS:-460}"
+DURATION="${TRAIN_CAPTURE_SECONDS:-458}"
 OUTPUT="${TRAIN_CAPTURE_OUTPUT:-exports/train-journey-screen-record.mp4}"
 CDP_PORT="${TRAIN_CAPTURE_CDP_PORT:-9333}"
 CHROME="${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
@@ -20,7 +20,7 @@ viewport capture plus the page's Web Audio output.
 
 Options:
   --url URL          Page URL to record. Default: http://localhost:8000/
-  --duration SEC    Capture duration in seconds. Default: 460
+  --duration SEC    Capture duration in seconds. Default: 458
   --out FILE        Output MP4 path. Default: exports/train-journey-screen-record.mp4
   --cdp-port PORT   Chrome DevTools port. Default: 9333
   --chrome PATH     Chrome binary path.

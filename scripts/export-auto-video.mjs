@@ -14,7 +14,8 @@ const outFile = path.join(outDir, "train-journey-auto.mp4");
 const CDN = "https://d8j0ntlcm91z4.cloudfront.net/user_3CkO7uW4kLN7beBuWrOrFiFPoSh/";
 const WIPE = 1.1;
 const CITY_DWELL = 90;
-const LISBON_DWELL_WITH_END = 100;
+const LISBON_CITY_DWELL = 88;
+const LISBON_DWELL_WITH_END = 98;
 
 const clips = {
   karachi: "hf_20260706_184807_1bb23aa0-6f3e-46fe-a371-c992e2c3770c.mp4",
@@ -117,6 +118,16 @@ function probeDuration(file) {
   ]));
 }
 
+function hasAudioStream(file) {
+  return runSync("ffprobe", [
+    "-v", "error",
+    "-select_streams", "a:0",
+    "-show_entries", "stream=codec_type",
+    "-of", "csv=p=0",
+    file,
+  ]).includes("audio");
+}
+
 function seconds(value) {
   return Number(value.toFixed(3));
 }
@@ -148,6 +159,25 @@ function neutral(volume = 1) {
   return [`volume=${volume}`];
 }
 
+function addClipAudioPiece(filters, pieces, inputIndex, segment, segmentIndex, segmentCount) {
+  if (segment.duration <= 0.05) return;
+  const label = `clipa${pieces.length}`;
+  const delay = Math.max(0, Math.round(segment.startTime * 1000));
+  const fade = seconds(Math.min(WIPE, Math.max(0, segment.duration / 2 - 0.01)));
+  const chain = [
+    `atrim=duration=${seconds(segment.duration)}`,
+    "asetpts=PTS-STARTPTS",
+    "aformat=channel_layouts=stereo",
+  ];
+  if (segmentIndex > 0 && fade > 0) chain.push(`afade=t=in:st=0:d=${fade}`);
+  if (segmentIndex < segmentCount - 1 && fade > 0) {
+    chain.push(`afade=t=out:st=${seconds(Math.max(0, segment.duration - fade))}:d=${fade}`);
+  }
+  chain.push(`adelay=${delay}|${delay}`);
+  filters.push(`[${inputIndex}:a]${chain.join(",")}[${label}]`);
+  pieces.push(label);
+}
+
 async function main() {
   await fsp.mkdir(cacheDir, { recursive: true });
   await fsp.mkdir(outDir, { recursive: true });
@@ -161,6 +191,9 @@ async function main() {
 
   const clipDurations = Object.fromEntries(
     Object.keys(clips).map((key) => [key, probeDuration(mediaPath(key, "mp4"))])
+  );
+  const clipHasAudio = Object.fromEntries(
+    Object.keys(clips).map((key) => [key, hasAudioStream(mediaPath(key, "mp4"))])
   );
 
   const segments = sequence.map((segment) => {
@@ -212,6 +245,10 @@ async function main() {
   filters.push(`[${videoLabel}]format=yuv420p[vout]`);
 
   const pieces = [];
+  segments.forEach((segment, i) => {
+    if (clipHasAudio[segment.key]) addClipAudioPiece(filters, pieces, i, segment, i, segments.length);
+  });
+
   const addCityMusic = ({ city, arrivalKey, cityKey, departureKey, final = false }) => {
     const musicIndex = musicInputStart + musicKeys.indexOf(city);
     const arrival = arrivalKey ? segments.find((s) => s.key === arrivalKey) : null;
@@ -221,7 +258,7 @@ async function main() {
     const arrivalDuration = arrival ? arrival.duration : 0;
     const endGlobal = final ? citySeg.startTime + LISBON_DWELL_WITH_END : departure.endTime;
     const departureStartLocal = final
-      ? citySeg.startTime + CITY_DWELL - musicStart
+      ? citySeg.startTime + LISBON_CITY_DWELL - musicStart
       : departure.startTime - musicStart;
     const endLocal = endGlobal - musicStart;
     const arrivalHalf = arrivalDuration / 2;
@@ -239,7 +276,7 @@ async function main() {
     const settleEnd = 17.5;
     addMusicPiece(filters, pieces, musicIndex, bodyStart, Math.min(settleStart, departureStartLocal), musicStart + bodyStart, neutral(1));
     addMusicPiece(filters, pieces, musicIndex, Math.max(bodyStart, settleStart), Math.min(settleEnd, departureStartLocal), musicStart + settleStart, [
-      "volume=eval=frame:volume='1-0.75*t/2.5'",
+      "volume=eval=frame:volume='if(isnan(t),1,1-0.75*min(t,2.5)/2.5)'",
     ]);
     addMusicPiece(filters, pieces, musicIndex, Math.max(bodyStart, settleEnd), departureStartLocal, musicStart + settleEnd, neutral(0.25));
 

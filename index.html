@@ -56,8 +56,8 @@
 </style>
 </head>
 <body>
-<video id="v0" class="layer" playsinline preload="auto"></video>
-<video id="v1" class="layer" playsinline preload="auto"></video>
+<video id="v0" class="layer" playsinline preload="auto" crossorigin="anonymous"></video>
+<video id="v1" class="layer" playsinline preload="auto" crossorigin="anonymous"></video>
 <div id="blurbar"></div>
 <div id="preloadHost"></div>
 <div id="hud">
@@ -149,6 +149,7 @@ let autoCityStartedAt = null;
 const WIPE_MS = 1100;
 const BAR = 200;
 const AUTO_CITY_MS = 90000;
+const AUTO_FINAL_CITY_MS = 88000;
 const MUSIC_FADE_MS = 2500;
 const MUSIC_SETTLE_DELAY_MS = 15000;
 const MUSIC_SETTLE_FADE_MS = 2500;
@@ -223,6 +224,7 @@ function preloadVideos() {
     const el = document.createElement("video");
     el.preload = "auto";
     el.playsInline = true;
+    el.crossOrigin = "anonymous";
     el.muted = true;
     el.src = clipUrl(key);
     preloadedVideos[key] = el;
@@ -650,7 +652,9 @@ function clearMask(el) { el.style.webkitMaskImage = ""; el.style.maskImage = "";
 
 function updateHud() {
   const s = segs[segIndex];
-  stopName.textContent = s.name;
+  const caption = autoMode ? autoCaptionForSegment(segIndex) : s.name;
+  stopName.textContent = caption;
+  stopName.style.display = caption ? "" : "none";
   dotsWrap.style.display = mode === "start" || autoMode ? "none" : "";
   if (mode === "start" || autoMode) hint.textContent = "";
   else if (segIndex === segs.length - 1) hint.textContent = "Journey's end \u00b7 \u2190 / Backspace back";
@@ -666,6 +670,7 @@ function load(el, i) {
   el.loop = false;
   el.playbackRate = 1;
   el.dataset.segIndex = i;
+  el.crossOrigin = "anonymous";
   el.src = clipUrl(segs[i].clip);
   const t = trimOf(i).start || 0;
   if (t > 0) {
@@ -740,6 +745,15 @@ function fadeTo(el, onDone) {
 //  - back-navigation directly into a city      -> start that city's track
 function isArrival(i)   { return segs[i] && segs[i].type === "trans" && segs[i+1] && segs[i+1].type === "city"; }
 function isDeparture(i) { return segs[i] && segs[i].type === "trans" && segs[i+1] && segs[i+1].type === "tunnel"; }
+function autoCaptionForSegment(i) {
+  const s = segs[i];
+  if (!s) return "";
+  if (s.type === "city") return s.name;
+  if (s.type === "tunnel") return "";
+  if (isDeparture(i)) return `Leaving ${segs[i - 1] ? segs[i - 1].name : ""}`.trim();
+  if (isArrival(i)) return `Approaching ${segs[i + 1] ? segs[i + 1].name : ""}`.trim();
+  return "";
+}
 function departureMusicIsActive(i) {
   const departing = segs[i - 1];
   return !!(departing && departing.type === "city" && musicCity === departing.clip);
@@ -849,7 +863,8 @@ function goBack() {
 function scheduler() {
   if (mode === "playing" && !busy) {
     const el = cur();
-    if (autoMode && segs[segIndex].type === "city" && autoCityStartedAt !== null && performance.now() - autoCityStartedAt >= AUTO_CITY_MS) {
+    const autoDwellMs = segIndex === segs.length - 1 ? AUTO_FINAL_CITY_MS : AUTO_CITY_MS;
+    if (autoMode && segs[segIndex].type === "city" && autoCityStartedAt !== null && performance.now() - autoCityStartedAt >= autoDwellMs) {
       if (segIndex >= segs.length - 1) endJourney();
       else goForward();
       requestAnimationFrame(scheduler);

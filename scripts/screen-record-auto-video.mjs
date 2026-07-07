@@ -21,7 +21,7 @@ const outDir = path.dirname(mp4File);
 const localUrl = process.env.TRAIN_CAPTURE_URL || "http://localhost:8000/";
 const chromePath = process.env.CHROME_PATH || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const viewport = { width: 1280, height: 720 };
-const captureSeconds = Number(process.env.TRAIN_CAPTURE_SECONDS || 460);
+const captureSeconds = Number(process.env.TRAIN_CAPTURE_SECONDS || 458);
 const cdpPort = Number(process.env.TRAIN_CAPTURE_CDP_PORT || 9333);
 
 function sleep(ms) {
