@@ -470,6 +470,13 @@ function applyMusicTone(pan, highpassHz, lowpassHz, immediate = false) {
   setter(musicNodes.lowpass.frequency, lowpassHz);
 }
 
+function setMusicEnvelopeGain(value, immediate = false) {
+  if (!musicNodes) return;
+  const gain = clamp01(value);
+  musicNodes.envelopeGainTarget = gain;
+  (immediate ? setAudioParamNow : setAudioParam)(musicNodes.envelopeGain.gain, gain);
+}
+
 function stopMusicNow() {
   debugLog("music-stop-now", { musicCity, hasSource: !!musicSource });
   musicRequestId++;
@@ -491,6 +498,7 @@ function musicStart(cityKey, entrance = "normal") {
   if (!ctx) return;
   unlockAudio();
   if (musicCity === cityKey && musicSource) return; // already playing this city's track
+  const isArrivalStart = entrance === "arrival";
   const instantStart = (cityKey === "karachi" && entrance === "normal") || entrance === "arrival";
   debugLog("music-start-request", { cityKey, entrance, instantStart, previousCity: musicCity, requestId: musicRequestId });
   stopMusicNow();
@@ -511,7 +519,8 @@ function musicStart(cityKey, entrance = "normal") {
     source.buffer = buffer;
     highpass.type = "highpass";
     lowpass.type = "lowpass";
-    envelopeGain.gain.setValueAtTime(1, ctx.currentTime);
+    const initialEnvelopeGain = isArrivalStart ? 0 : 1;
+    envelopeGain.gain.setValueAtTime(initialEnvelopeGain, ctx.currentTime);
     mainGain.gain.setValueAtTime(instantStart ? 1 : 0, ctx.currentTime);
     highpass.frequency.setValueAtTime(NEUTRAL_HIGHPASS_HZ, ctx.currentTime);
     lowpass.frequency.setValueAtTime(NEUTRAL_LOWPASS_HZ, ctx.currentTime);
@@ -528,6 +537,7 @@ function musicStart(cityKey, entrance = "normal") {
     musicNodes = {
       mainGain, envelopeGain, highpass, lowpass, panner,
       mainGainRamp: { from: initialMainGain, to: initialMainGain, start: ctx.currentTime, duration: 0 },
+      envelopeGainTarget: initialEnvelopeGain,
       toneTarget: { pan: 0, highpass: NEUTRAL_HIGHPASS_HZ, lowpass: NEUTRAL_LOWPASS_HZ },
       settleTimer: null,
     };
@@ -581,19 +591,23 @@ function musicFadeOut(ms) {
 }
 
 // Arrival envelope, driven by the tunnel->city transition's playback progress:
-//   0%..50%  : pan full right -> center, and open the distant/tinny filter
-//   50%..100%: hold normal center audio.
+//   0%..50%  : fade volume 0 -> 100 while held full right and distant/tinny
+//   50%..100%: hold volume and open pan/filter back to normal center audio.
 function musicArrivalEnvelope(progress) {
   if (!musicCity || !musicNodes) return;
+  progress = clamp01(progress);
   if (progress < 0.5) {
     const t = progress / 0.5;
+    setMusicEnvelopeGain(t);
+    applyMusicTone(1, TINNY_HIGHPASS_HZ, TINNY_LOWPASS_HZ);
+  } else {
+    const t = (progress - 0.5) / 0.5;
+    setMusicEnvelopeGain(1);
     applyMusicTone(
       1 - t,
       TINNY_HIGHPASS_HZ + (NEUTRAL_HIGHPASS_HZ - TINNY_HIGHPASS_HZ) * t,
       TINNY_LOWPASS_HZ + (NEUTRAL_LOWPASS_HZ - TINNY_LOWPASS_HZ) * t
     );
-  } else {
-    applyMusicTone(0, NEUTRAL_HIGHPASS_HZ, NEUTRAL_LOWPASS_HZ);
   }
 }
 
@@ -605,7 +619,7 @@ function musicDepartureEnvelope(progress) {
   if (!musicCity || !musicNodes) return;
   if (progress < 0.5) {
     const t = progress / 0.5;
-    setAudioParam(musicNodes.envelopeGain.gain, 1);
+    setMusicEnvelopeGain(1);
     applyMusicTone(
       -t,
       NEUTRAL_HIGHPASS_HZ + (TINNY_HIGHPASS_HZ - NEUTRAL_HIGHPASS_HZ) * t,
@@ -614,7 +628,7 @@ function musicDepartureEnvelope(progress) {
   } else if (progress < 1) {
     const t = (progress - 0.5) / 0.5;
     applyMusicTone(-1, TINNY_HIGHPASS_HZ, TINNY_LOWPASS_HZ);
-    setAudioParam(musicNodes.envelopeGain.gain, 1 - t);
+    setMusicEnvelopeGain(1 - t);
   } else {
     stopMusicNow();
   }
@@ -951,6 +965,7 @@ function debugState() {
       mainGain: musicNodes ? musicNodes.mainGain.gain.value : null,
       currentMainGain: currentMainGain(),
       envelopeGain: musicNodes ? musicNodes.envelopeGain.gain.value : null,
+      envelopeGainTarget: musicNodes ? musicNodes.envelopeGainTarget : null,
       highpass: musicNodes ? musicNodes.highpass.frequency.value : null,
       lowpass: musicNodes ? musicNodes.lowpass.frequency.value : null,
       pan: readPan(),
