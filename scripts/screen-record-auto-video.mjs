@@ -295,7 +295,7 @@ function audioRecorderScript(uploadUrl) {
         })),
         videoSourceErrors: audioCapture.videoSourceErrors
       };
-      setTimeout(() => window.__stopTrainAudioCapture(), ${Math.round(captureSeconds * 1000)});
+      setTimeout(() => window.__stopTrainAudioCapture(), ${Math.round((captureSeconds + 30) * 1000)});
       return window.__trainCaptureAudioStatus;
     })()
   `;
@@ -325,14 +325,20 @@ async function startScreencast(cdp) {
   const frames = [];
   const writes = [];
   let count = 0;
+  let firstFrameResolve;
+  const firstFrame = new Promise((resolve) => {
+    firstFrameResolve = resolve;
+  });
 
   const onFrame = (params) => {
     const file = `frame-${String(count).padStart(6, "0")}.jpg`;
     const timestamp = params.metadata && Number.isFinite(params.metadata.timestamp)
       ? params.metadata.timestamp
       : Date.now() / 1000;
+    const frame = { file, timestamp };
     count += 1;
-    frames.push({ file, timestamp });
+    frames.push(frame);
+    if (count === 1) firstFrameResolve(frame);
     writes.push(fsp.writeFile(path.join(framesDir, file), params.data, "base64"));
     cdp.send("Page.screencastFrameAck", { sessionId: params.sessionId }).catch(() => {});
   };
@@ -348,6 +354,7 @@ async function startScreencast(cdp) {
 
   return {
     frameCount: () => count,
+    waitForFirstFrame: () => firstFrame,
     async stop() {
       await cdp.send("Page.stopScreencast").catch(() => {});
       cdp.off("Page.screencastFrame", onFrame);
@@ -434,6 +441,42 @@ async function withTimeout(promise, ms, label) {
   }
 }
 
+async function waitForInitialVideoFrame(cdp) {
+  const result = await cdp.send("Runtime.evaluate", {
+    expression: `new Promise((resolve) => {
+      const startedAt = performance.now();
+      function done(el, extra = {}) {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve({
+          ...extra,
+          readyState: el ? el.readyState : null,
+          currentTime: el ? el.currentTime : null,
+          videoWidth: el ? el.videoWidth : null,
+          videoHeight: el ? el.videoHeight : null,
+          src: el ? (el.currentSrc || el.src) : null
+        })));
+      }
+      function tick() {
+        const debug = window.__trainJourneyDebug;
+        const refs = debug && debug.refs && debug.refs();
+        const el = refs && refs.v && refs.v[0];
+        if (el && el.readyState >= 2 && el.videoWidth && el.videoHeight) {
+          done(el);
+          return;
+        }
+        if (performance.now() - startedAt > 15000) {
+          done(el, { timeout: true });
+          return;
+        }
+        requestAnimationFrame(tick);
+      }
+      tick();
+    })`,
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  return result.result.value;
+}
+
 async function main() {
   await fsp.mkdir(outDir, { recursive: true });
   await fsp.rm(cacheDir, { recursive: true, force: true });
@@ -477,6 +520,13 @@ async function main() {
     });
     console.log("Page:", pageInfo.result.value);
 
+    const initialVideo = await withTimeout(waitForInitialVideoFrame(cdp), 16000, "Initial video frame");
+    console.log("Initial video ready:", initialVideo);
+
+    const screencast = await startScreencast(cdp);
+    const firstFrame = await withTimeout(screencast.waitForFirstFrame(), 5000, "First screencast frame");
+    console.log("First screencast frame:", firstFrame);
+
     const uploadUrl = `http://127.0.0.1:${upload.port}/upload-audio`;
     const audioStarted = await cdp.send("Runtime.evaluate", {
       expression: audioRecorderScript(uploadUrl),
@@ -486,7 +536,6 @@ async function main() {
     });
     console.log("Audio recorder:", audioStarted.result.value);
 
-    const screencast = await startScreencast(cdp);
     await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
     await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
 
@@ -499,6 +548,10 @@ async function main() {
     }
 
     frames = await screencast.stop();
+    await cdp.send("Runtime.evaluate", {
+      expression: "window.__stopTrainAudioCapture && window.__stopTrainAudioCapture()",
+      returnByValue: true,
+    });
     const uploaded = await withTimeout(upload.uploaded, 30000, "Audio upload");
     console.log("Uploaded audio capture:", uploaded);
     console.log(`Captured ${frames.length} viewport frames`);
