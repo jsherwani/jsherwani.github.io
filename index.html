@@ -150,7 +150,6 @@ const MUSIC_FADE_MS = 2500;
 const MUSIC_SETTLE_DELAY_MS = 15000;
 const MUSIC_SETTLE_FADE_MS = 2500;
 const MUSIC_SETTLED_GAIN = 0.25;
-const MUSIC_RESTORE_MS = 900;
 const DEPARTURE_PAN_EXTRA_SEC = 2;
 const MIN_DEPARTURE_FADE_SEC = 0.75;
 const JOURNEY_END_MS = 10000;
@@ -428,10 +427,9 @@ function scheduleMusicSettle(nodes = musicNodes) {
   }, MUSIC_SETTLE_DELAY_MS);
 }
 
-function restoreMusicForDeparture() {
+function prepareMusicForDeparture() {
   if (!musicNodes) return;
   clearMusicSettleTimer(musicNodes);
-  scheduleMainGainRamp(musicNodes, 1, MUSIC_RESTORE_MS);
 }
 
 function createPanner(ctx) {
@@ -742,7 +740,7 @@ function wipeToSegment(i) {
   const outgoingIndex = segIndex;
   debugLog("wipe-to-segment", { from: outgoingIndex, to: i, fromSeg: segs[outgoingIndex], toSeg: segs[i] });
   if (isArrival(outgoingIndex) && i !== outgoingIndex) musicArrivalEnvelope(1);
-  if (isDeparture(i)) restoreMusicForDeparture();
+  if (isDeparture(i)) prepareMusicForDeparture();
   segIndex = i;
   if (segs[i].type === "city") beginCityVideoAudio(i);
   const el = idle();
