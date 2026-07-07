@@ -147,6 +147,8 @@ let busy = false;
 const WIPE_MS = 1100;
 const BAR = 200;
 const MUSIC_FADE_MS = 2500;
+const DEPARTURE_PAN_EXTRA_SEC = 2;
+const MIN_DEPARTURE_FADE_SEC = 0.75;
 const IS_IOS_WEBKIT = (
   /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
@@ -157,12 +159,28 @@ function idle() { return v[1 - active]; }
 function trimOf(i) { return trims[segs[i].clip]; }
 function fileOf(i) { return clips[segs[i].clip].file; }
 function clipUrl(key) { return CDN + clips[key].file; }
-function segmentProgress(i, el) {
+function segmentTiming(i, el) {
   const tr = trimOf(i);
   const a = tr.start || 0;
   const duration = el && el.duration && isFinite(el.duration) ? el.duration : a + 0.1;
   const b = Math.max(a + 0.1, duration - (tr.end || 0));
-  return clamp01((((el && el.currentTime) || 0) - a) / (b - a));
+  const range = b - a;
+  const elapsed = clamp01((((el && el.currentTime) || 0) - a) / range) * range;
+  return { elapsed, range };
+}
+function segmentProgress(i, el) {
+  const timing = segmentTiming(i, el);
+  return clamp01(timing.elapsed / timing.range);
+}
+function departureEnvelopeProgress(i, el) {
+  const timing = segmentTiming(i, el);
+  const latestPanEnd = Math.max(0.1, timing.range - MIN_DEPARTURE_FADE_SEC);
+  const panEnd = Math.max(
+    0.1,
+    Math.min(latestPanEnd, timing.range * 0.5 + DEPARTURE_PAN_EXTRA_SEC)
+  );
+  if (timing.elapsed < panEnd) return 0.5 * clamp01(timing.elapsed / panEnd);
+  return 0.5 + 0.5 * clamp01((timing.elapsed - panEnd) / Math.max(0.1, timing.range - panEnd));
 }
 
 const preloadedVideos = {};
@@ -399,6 +417,7 @@ function musicStart(cityKey, entrance = "normal") {
   if (!ctx) return;
   unlockAudio();
   if (musicCity === cityKey && musicSource) return; // already playing this city's track
+  const instantStart = cityKey === "karachi" && entrance === "normal";
   stopMusicNow();
   musicCity = cityKey;
   const requestId = ++musicRequestId;
@@ -415,7 +434,7 @@ function musicStart(cityKey, entrance = "normal") {
     highpass.type = "highpass";
     lowpass.type = "lowpass";
     envelopeGain.gain.setValueAtTime(1, ctx.currentTime);
-    mainGain.gain.setValueAtTime(0, ctx.currentTime);
+    mainGain.gain.setValueAtTime(instantStart ? 1 : 0, ctx.currentTime);
     highpass.frequency.setValueAtTime(NEUTRAL_HIGHPASS_HZ, ctx.currentTime);
     lowpass.frequency.setValueAtTime(NEUTRAL_LOWPASS_HZ, ctx.currentTime);
 
@@ -439,7 +458,7 @@ function musicStart(cityKey, entrance = "normal") {
       }
     };
     source.start(0);
-    mainGain.gain.linearRampToValueAtTime(1, ctx.currentTime + MUSIC_FADE_MS / 1000);
+    if (!instantStart) mainGain.gain.linearRampToValueAtTime(1, ctx.currentTime + MUSIC_FADE_MS / 1000);
   }).catch(()=>{ if (requestId === musicRequestId) stopMusicNow(); });
 }
 
@@ -549,7 +568,7 @@ function wipeTo(el, onDone, outgoingIndex = segIndex) {
     setMask(el, x);
     blurbar.style.left = (x - BAR/2) + "px";
     updateTransitionAudio(old, el, t);
-    if (isDeparture(outgoingIndex)) musicDepartureEnvelope(segmentProgress(outgoingIndex, old));
+    if (isDeparture(outgoingIndex)) musicDepartureEnvelope(departureEnvelopeProgress(outgoingIndex, old));
     if (t < 1) requestAnimationFrame(frame);
     else {
       blurbar.style.display = "none";
@@ -677,7 +696,7 @@ function paintProgress() {
   if (mode !== "start" && el.duration && isFinite(el.duration)) {
     frac = segmentProgress(segIndex, el);
     if (isDeparture(segIndex)) {
-      musicFrac = frac;
+      musicFrac = departureEnvelopeProgress(segIndex, el);
     } else if (isArrival(segIndex)) {
       arrivalFrac = frac;
     }
