@@ -428,7 +428,7 @@ function musicStart(cityKey, entrance = "normal") {
 
     musicSource = source;
     musicNodes = { mainGain, envelopeGain, highpass, lowpass, panner };
-    if (entrance === "arrival") applyMusicTone(-1, TINNY_HIGHPASS_HZ, TINNY_LOWPASS_HZ, true);
+    if (entrance === "arrival") applyMusicTone(1, TINNY_HIGHPASS_HZ, TINNY_LOWPASS_HZ, true);
     else applyMusicTone(0, NEUTRAL_HIGHPASS_HZ, NEUTRAL_LOWPASS_HZ, true);
 
     source.onended = () => {
@@ -459,14 +459,14 @@ function musicStop() {
 }
 
 // Arrival envelope, driven by the tunnel->city transition's playback progress:
-//   0%..50%  : pan full left -> center, and open the distant/tinny filter
+//   0%..50%  : pan full right -> center, and open the distant/tinny filter
 //   50%..100%: hold normal center audio.
 function musicArrivalEnvelope(progress) {
   if (!musicCity || !musicNodes) return;
   if (progress < 0.5) {
     const t = progress / 0.5;
     applyMusicTone(
-      -1 + t,
+      1 - t,
       TINNY_HIGHPASS_HZ + (NEUTRAL_HIGHPASS_HZ - TINNY_HIGHPASS_HZ) * t,
       TINNY_LOWPASS_HZ + (NEUTRAL_LOWPASS_HZ - TINNY_LOWPASS_HZ) * t
     );
