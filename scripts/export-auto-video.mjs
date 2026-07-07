@@ -46,10 +46,10 @@ const trims = {
 };
 
 const music = {
-  karachi: "https://ucb82479f9eae31bfd031baee23b.dl.dropboxusercontent.com/cd/0/inline/DDxWOh6zj0BksAmMqXCVVfPd1AFePcNh-ZSJRi_gIFLRbaK9YkRfmfoVr9S80arI9m4gg0BlIGTxlEvo3KNd9I5HhZ6a_ujCyDChRriSVChAR0IMYFwQdZjZsek45PRPM2M/file",
-  hawaii: "https://ucf28ef7e4cf73a9a3cd41eb8495.dl.dropboxusercontent.com/cd/0/inline/DDzR_YpIQKDmsBHnyctj7XJGaSgZQTMGF5-_JN8JDTxxSqZmK_ZHGYXmDQiSiJ_RLmCUCmtweeg4paI24gppSz_lsLCIPCfyT7EmzzrFzcK7yfo863a_GGKaX2VpoCAvOK4/file",
-  sf: "https://uc3db76bafc998b81e6971affdb0.dl.dropboxusercontent.com/cd/0/inline/DDxtOhuKeWxbXVhlZq124DyT73eesS0zqvJTH2Aursrzwc5NpoWx_mgcJXaNL-34U0sqbxHGNkKh1oFS8Qtlql_ehbVD4Z257CqVDelswWrGjGXa2TddF9cGI9C38pLn9oM/file",
-  lisbon: "https://uc2c98c66fcbe92cd36571090fb3.dl.dropboxusercontent.com/cd/0/inline/DDw5AS7rl9Ar5Af6hWf7X4-irvhSHrdPj8tyc0arcgaFA6MaD61RZVAl5RQQfag8mw3Uh6_LAc-DWAEWANJ8_KGRBDW55Rz-2YlwtG0c9aNzDxhUTaZLyFCuS2-aMOh40BQ/file",
+  karachi: "mp3/karachi.mp3",
+  hawaii: "mp3/hawaii.mp3",
+  sf: "mp3/sf.mp3",
+  lisbon: "mp3/lisbon.mp3",
 };
 
 const sequence = [
@@ -101,6 +101,17 @@ async function download(url, dest) {
     request(url);
   });
   await fsp.rename(tmp, dest);
+}
+
+async function stageAsset(source, dest) {
+  if (/^https?:\/\//.test(source)) {
+    await download(source, dest);
+    return;
+  }
+  if (fs.existsSync(dest)) return;
+  const sourcePath = path.resolve(root, source);
+  await fsp.mkdir(path.dirname(dest), { recursive: true });
+  await fsp.copyFile(sourcePath, dest);
 }
 
 function runSync(command, args) {
@@ -186,7 +197,7 @@ async function main() {
     await download(`${CDN}${file}`, mediaPath(key, "mp4"));
   }
   for (const [key, url] of Object.entries(music)) {
-    await download(url, mediaPath(key, "mp3"));
+    await stageAsset(url, mediaPath(key, "mp3"));
   }
 
   const clipDurations = Object.fromEntries(
