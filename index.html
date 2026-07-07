@@ -144,8 +144,11 @@ let active = 0;
 let segIndex = 0;
 let mode = "start";
 let busy = false;
+let autoMode = false;
+let autoCityStartedAt = null;
 const WIPE_MS = 1100;
 const BAR = 200;
+const AUTO_CITY_MS = 90000;
 const MUSIC_FADE_MS = 2500;
 const MUSIC_SETTLE_DELAY_MS = 15000;
 const MUSIC_SETTLE_FADE_MS = 2500;
@@ -197,6 +200,11 @@ let cityVideoAudioVisit = null;
 function beginCityVideoAudio(i) {
   if (!segs[i] || segs[i].type !== "city") return;
   cityVideoAudioVisit = { segIndex: i, startedAt: performance.now() };
+}
+
+function enterCity(i) {
+  beginCityVideoAudio(i);
+  if (autoMode) autoCityStartedAt = performance.now();
 }
 
 function cityVideoAudioEnvelope(el) {
@@ -643,9 +651,10 @@ function clearMask(el) { el.style.webkitMaskImage = ""; el.style.maskImage = "";
 function updateHud() {
   const s = segs[segIndex];
   stopName.textContent = s.name;
-  if (mode === "start") hint.textContent = "Space / \u2192 to depart \u00b7 \u2190 / Backspace back \u00b7 Tab: tweaks";
-  else if (segIndex === segs.length - 1) hint.textContent = "Journey's end \u00b7 \u2190 / Backspace back \u00b7 Tab: tweaks";
-  else hint.textContent = "Space / \u2192: continue \u00b7 \u2190 / Backspace: back \u00b7 Tab: tweaks";
+  dotsWrap.style.display = mode === "start" || autoMode ? "none" : "";
+  if (mode === "start" || autoMode) hint.textContent = "";
+  else if (segIndex === segs.length - 1) hint.textContent = "Journey's end \u00b7 \u2190 / Backspace back";
+  else hint.textContent = "Space / \u2192: continue \u00b7 \u2190 / Backspace: back";
   dotEls.forEach((d, i) => {
     d.classList.toggle("done", i < segIndex);
     d.classList.toggle("current", i === segIndex);
@@ -742,7 +751,7 @@ function wipeToSegment(i) {
   if (isArrival(outgoingIndex) && i !== outgoingIndex) musicArrivalEnvelope(1);
   if (isDeparture(i)) prepareMusicForDeparture();
   segIndex = i;
-  if (segs[i].type === "city") beginCityVideoAudio(i);
+  if (segs[i].type === "city") enterCity(i);
   const el = idle();
   load(el, i);
   playVideo(el);
@@ -778,12 +787,25 @@ function endJourney() {
   requestAnimationFrame(frame);
 }
 
+function startAutoMode() {
+  if (mode === "ending" || mode === "ended") return;
+  autoMode = true;
+  if (paneOpen) togglePane();
+  debugLog("auto-mode-start", { segIndex, mode });
+  if (mode === "start") {
+    goForward();
+    return;
+  }
+  if (segs[segIndex].type === "city") autoCityStartedAt = performance.now();
+  updateHud();
+}
+
 function goForward() {
   unlockAudio();
   if (busy) return;
   if (mode === "start") {
     mode = "playing";
-    beginCityVideoAudio(segIndex);
+    enterCity(segIndex);
     playVideo(cur());
     updateHud();
     musicStart(segs[0].clip);
@@ -816,7 +838,7 @@ function goBack() {
   mode = "playing";
   musicStop();
   segIndex = target;
-  beginCityVideoAudio(segIndex);
+  enterCity(segIndex);
   const el = idle();
   load(el, segIndex);
   playVideo(el);
@@ -827,6 +849,12 @@ function goBack() {
 function scheduler() {
   if (mode === "playing" && !busy) {
     const el = cur();
+    if (autoMode && segs[segIndex].type === "city" && autoCityStartedAt !== null && performance.now() - autoCityStartedAt >= AUTO_CITY_MS) {
+      if (segIndex >= segs.length - 1) endJourney();
+      else goForward();
+      requestAnimationFrame(scheduler);
+      return;
+    }
     if (el.duration && isFinite(el.duration)) {
       const tr = trimOf(segIndex);
       const effEnd = Math.max(0.2, el.duration - (tr.end || 0));
@@ -943,6 +971,8 @@ function debugState() {
     busy,
     active,
     segIndex,
+    autoMode,
+    autoCityStartedAt,
     activeVideoSegIndex: Number.isFinite(currentSegIndex) ? currentSegIndex : null,
     segment: segs[segIndex],
     activeSegmentProgress: Number.isFinite(currentSegIndex) ? segmentProgress(currentSegIndex, el) : null,
@@ -1019,7 +1049,7 @@ document.addEventListener("touchstart", unlockAudio, { passive: true });
 document.addEventListener("keydown", unlockAudio);
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Tab") { e.preventDefault(); togglePane(); return; }
+  if (e.key === "Tab") { e.preventDefault(); startAutoMode(); return; }
   if (paneOpen && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
   if (e.repeat) return;
   if (e.key === "ArrowLeft" || e.key === "Backspace") { e.preventDefault(); goBack(); }
