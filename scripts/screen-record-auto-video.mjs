@@ -7,13 +7,17 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const outDir = path.join(root, "exports");
 const cacheDir = path.join(root, ".export-cache", "screen-record");
 const framesDir = path.join(cacheDir, "frames");
 const audioFile = path.join(cacheDir, "audio.webm");
 const concatFile = path.join(cacheDir, "frames.ffconcat");
+const rawVideoFile = path.join(cacheDir, "video-only-raw.mp4");
 const videoOnlyFile = path.join(cacheDir, "video-only.mp4");
-const mp4File = path.join(outDir, "train-journey-screen-record.mp4");
+function resolveFromRoot(file) {
+  return path.isAbsolute(file) ? file : path.join(root, file);
+}
+const mp4File = resolveFromRoot(process.env.TRAIN_CAPTURE_OUTPUT || "exports/train-journey-screen-record.mp4");
+const outDir = path.dirname(mp4File);
 const localUrl = process.env.TRAIN_CAPTURE_URL || "http://localhost:8000/";
 const chromePath = process.env.CHROME_PATH || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const viewport = { width: 1280, height: 720 };
@@ -304,15 +308,12 @@ function concatPath(file) {
 function buildFrameConcat(frames) {
   if (frames.length < 2) throw new Error(`Only captured ${frames.length} frame(s)`);
   const lines = ["ffconcat version 1.0"];
-  const startTimestamp = frames[0].timestamp;
   for (let i = 0; i < frames.length; i += 1) {
     lines.push(`file '${concatPath(path.join(framesDir, frames[i].file))}'`);
     const next = frames[i + 1];
-    const elapsed = frames[i].timestamp - startTimestamp;
-    let duration = next ? next.timestamp - frames[i].timestamp : captureSeconds - elapsed;
+    let duration = next ? next.timestamp - frames[i].timestamp : 1 / 30;
     if (!Number.isFinite(duration) || duration <= 0) duration = 1 / 30;
-    if (next) duration = Math.min(0.25, Math.max(1 / 120, duration));
-    else duration = Math.max(1 / 30, duration);
+    duration = Math.min(0.25, Math.max(1 / 120, duration));
     lines.push(`duration ${duration.toFixed(6)}`);
   }
   lines.push(`file '${concatPath(path.join(framesDir, frames[frames.length - 1].file))}'`);
@@ -364,6 +365,33 @@ async function encodeVideo(frames) {
     "-safe", "0",
     "-i", concatFile,
     "-vf", `scale=${viewport.width}:${viewport.height}:force_original_aspect_ratio=decrease,pad=${viewport.width}:${viewport.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p`,
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-crf", "18",
+    "-pix_fmt", "yuv420p",
+    "-color_range", "tv",
+    "-colorspace", "bt709",
+    "-color_primaries", "bt709",
+    "-color_trc", "bt709",
+    rawVideoFile,
+  ]);
+
+  const rawDuration = Number(run("ffprobe", [
+    "-v", "error",
+    "-show_entries", "format=duration",
+    "-of", "default=noprint_wrappers=1:nokey=1",
+    rawVideoFile,
+  ]).trim());
+  const padSeconds = Number.isFinite(rawDuration) ? Math.max(0, captureSeconds - rawDuration) : 0;
+  if (padSeconds <= 0.05) {
+    await fsp.copyFile(rawVideoFile, videoOnlyFile);
+    return;
+  }
+
+  run("ffmpeg", [
+    "-y",
+    "-i", rawVideoFile,
+    "-vf", `tpad=stop_mode=clone:stop_duration=${padSeconds.toFixed(6)},format=yuv420p`,
     "-c:v", "libx264",
     "-preset", "veryfast",
     "-crf", "18",

@@ -84,6 +84,32 @@ If a fresh fixed MP4 is wanted, re-assemble from §2 winners:
 Karachi ×5 → K→T → tunnel ×1 → T→H → Hawaii ×5 → H→T → tunnel → T→SF → SF ×5 →
 SF→T → tunnel → T→L → Lisbon ×6 = 30 blocks of 15s = 450s.
 
+### Current browser export script
+
+Use the committed export wrapper for the current interactive player:
+
+```bash
+scripts/export-train-journey.sh
+```
+
+It records `http://localhost:8000/` for 460s by default, auto-starts
+`python3 -m http.server 8000` if nothing is already serving localhost, captures
+the exact 1280×720 browser viewport through headless Chrome DevTools, records
+the page's Web Audio output, and writes:
+
+```text
+exports/train-journey-screen-record.mp4
+```
+
+Smoke test without waiting for the full journey:
+
+```bash
+scripts/export-train-journey.sh --duration 5 --out exports/export-smoke.mp4
+```
+
+Useful overrides: `--url`, `--duration`, `--out`, `--cdp-port`, `--chrome`,
+and `--no-server`.
+
 ## 5. The web player — `train-journey-player.html`
 
 Single self-contained HTML file, no build step, streams clips from the CDN.
