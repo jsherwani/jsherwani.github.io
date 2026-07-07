@@ -149,6 +149,8 @@ const BAR = 200;
 const MUSIC_FADE_MS = 2500;
 const DEPARTURE_PAN_EXTRA_SEC = 2;
 const MIN_DEPARTURE_FADE_SEC = 0.75;
+const JOURNEY_END_MS = 5000;
+const MIN_END_PLAYBACK_RATE = 0.06;
 const IS_IOS_WEBKIT = (
   /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
@@ -464,6 +466,10 @@ function musicStart(cityKey, entrance = "normal") {
 
 // Hard stop with a short fade (used only for back-navigation away from a city).
 function musicStop() {
+  musicFadeOut(900);
+}
+
+function musicFadeOut(ms) {
   if (!musicCity || !musicNodes || !audioCtx) { stopMusicNow(); return; }
   const source = musicSource;
   const nodes = musicNodes;
@@ -471,10 +477,10 @@ function musicStop() {
   musicRequestId++;
   clearTimeout(musicStopTimer);
   holdAudioParam(nodes.mainGain.gain);
-  nodes.mainGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.9);
+  nodes.mainGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + ms / 1000);
   musicStopTimer = setTimeout(() => {
     if (musicSource === source) stopMusicNow();
-  }, 950);
+  }, ms + 50);
 }
 
 // Arrival envelope, driven by the tunnel->city transition's playback progress:
@@ -540,6 +546,7 @@ function updateHud() {
 function load(el, i) {
   el.onended = null;
   el.loop = false;
+  el.playbackRate = 1;
   el.src = clipUrl(segs[i].clip);
   const t = trimOf(i).start || 0;
   if (t > 0) {
@@ -626,6 +633,32 @@ function wipeToSegment(i) {
   wipeTo(el, null, outgoingIndex);
 }
 
+function endJourney() {
+  if (mode !== "playing" || segIndex !== segs.length - 1 || busy) return;
+  const el = cur();
+  mode = "ending";
+  busy = true;
+  updateHud();
+  musicFadeOut(JOURNEY_END_MS);
+  const startRate = Math.max(MIN_END_PLAYBACK_RATE, el.playbackRate || 1);
+  const start = performance.now();
+  function frame(now) {
+    const t = clamp01((now - start) / JOURNEY_END_MS);
+    const rate = Math.max(MIN_END_PLAYBACK_RATE, startRate * (1 - t));
+    try { el.playbackRate = rate; } catch(e) {}
+    if (t < 1) {
+      requestAnimationFrame(frame);
+    } else {
+      el.pause();
+      el.playbackRate = 1;
+      mode = "ended";
+      busy = false;
+      updateHud();
+    }
+  }
+  requestAnimationFrame(frame);
+}
+
 function goForward() {
   unlockAudio();
   if (busy) return;
@@ -636,7 +669,10 @@ function goForward() {
     musicStart(segs[0].clip);
     return;
   }
-  if (segIndex >= segs.length - 1) return;
+  if (segIndex >= segs.length - 1) {
+    endJourney();
+    return;
+  }
   const s = segs[segIndex];
   let target;
   if (s.type === "city") target = segIndex + 1;
@@ -657,6 +693,7 @@ function goBack() {
     if (cityIdx[i] < segIndex) { target = cityIdx[i]; break; }
   }
   if (target < 0) return;
+  mode = "playing";
   musicStop();
   segIndex = target;
   const el = idle();
