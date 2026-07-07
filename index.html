@@ -13,7 +13,7 @@
             mask-image: linear-gradient(to right, transparent 0%, black 30%, black 70%, transparent 100%);
     pointer-events:none; display:none; z-index:5;
   }
-  #ytHost { position:absolute; left:-9999px; top:-9999px; width:1px; height:1px; overflow:hidden; }
+  #preloadHost { position:absolute; left:-9999px; top:-9999px; width:1px; height:1px; overflow:hidden; }
   #hud {
     position:fixed; left:50%; bottom:26px; transform:translateX(-50%);
     font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -59,7 +59,7 @@
 <video id="v0" class="layer" playsinline preload="auto"></video>
 <video id="v1" class="layer" playsinline preload="auto"></video>
 <div id="blurbar"></div>
-<div id="ytHost"></div>
+<div id="preloadHost"></div>
 <div id="hud">
   <div class="stop" id="stopName">Karachi</div>
   <div class="hint" id="hint"></div>
@@ -67,7 +67,7 @@
 </div>
 <div id="tweaks">
   <h2>Clip trims &amp; music (Tab to close)</h2>
-  <p>Seconds chopped off the start / end of each clip; city rows also take a YouTube URL whose audio fades in when the city starts and fades out as the train enters the tunnel. Copy the JSON and send it back to hardcode.</p>
+  <p>Seconds chopped off the start / end of each clip; city rows also take an MP3 path whose audio fades in when the city starts and fades out as the train enters the tunnel. Copy the JSON and send it back to hardcode.</p>
   <div id="clipRows"></div>
   <button id="copyBtn">Copy JSON</button><span id="copied"></span>
 </div>
@@ -80,7 +80,7 @@ const segs = [
   { type:"trans",  name:"Karachi \u2192 Tunnel",       clip:"k2t" },
   { type:"tunnel", name:"Tunnel",                      clip:"tunnel" },
   { type:"trans",  name:"Tunnel \u2192 Hawaii",        clip:"t2h" },
-  { type:"city",   name:"Hawaii \u2014 Big Island",    clip:"hawaii" },
+  { type:"city",   name:"Hawaii",                     clip:"hawaii" },
   { type:"trans",  name:"Hawaii \u2192 Tunnel",        clip:"h2t" },
   { type:"tunnel", name:"Tunnel",                      clip:"tunnel" },
   { type:"trans",  name:"Tunnel \u2192 San Francisco", clip:"t2sf" },
@@ -117,17 +117,11 @@ const trims = {
 
 // baked-in city music defaults
 const music = {
-  karachi: "https://www.youtube.com/watch?v=eK5gPcFjQps",
-  hawaii:  "https://www.youtube.com/watch?v=V1bFr2SWP1I&list=RDV1bFr2SWP1I&start_radio=1",
-  sf:      "https://www.youtube.com/watch?v=A-7XPCNrD5Y",
-  lisbon:  "https://www.youtube.com/watch?v=-sze5rpbklM&list=PL_HoiGNUauFmyCF8zjtJu224F7LmIN9xS",
+  karachi: "mp3/karachi.mp3",
+  hawaii:  "mp3/hawaii.mp3",
+  sf:      "mp3/sf.mp3",
+  lisbon:  "mp3/lisbon.mp3",
 };
-
-function ytId(url) {
-  if (!url) return null;
-  const m = url.match(/[?&]v=([A-Za-z0-9_-]{6,})/) || url.match(/youtu\.be\/([A-Za-z0-9_-]{6,})/);
-  return m ? m[1] : null;
-}
 
 const v = [document.getElementById("v0"), document.getElementById("v1")];
 const blurbar = document.getElementById("blurbar");
@@ -153,91 +147,338 @@ let busy = false;
 const WIPE_MS = 1100;
 const BAR = 200;
 const MUSIC_FADE_MS = 2500;
+const IS_IOS_WEBKIT = (
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+) && /WebKit/.test(navigator.userAgent);
 
 function cur()  { return v[active]; }
 function idle() { return v[1 - active]; }
 function trimOf(i) { return trims[segs[i].clip]; }
 function fileOf(i) { return clips[segs[i].clip].file; }
+function clipUrl(key) { return CDN + clips[key].file; }
 
-// ---------- YouTube music engine ----------
-const ytPlayers = {};      // cityKey -> YT.Player
-let ytReady = false;
-let musicRamp = null;      // active fade { player, from, to, start, onDone }
-let musicCity = null;      // city whose track is (or is fading) active
+const preloadedVideos = {};
+let forceMutedVideos = false;
 
-const tag = document.createElement("script");
-tag.src = "https://www.youtube.com/iframe_api";
-document.head.appendChild(tag);
-window.onYouTubeIframeAPIReady = function() {
-  ytReady = true;
-  ["karachi","hawaii","sf","lisbon"].forEach(k => makePlayer(k, ytId(music[k])));
-};
-function makePlayer(k, vid) {
-  if (!vid) return;
-  const host = document.createElement("div");
-  host.id = "yt_" + k;
-  document.getElementById("ytHost").appendChild(host);
-  ytPlayers[k] = new YT.Player(host.id, {
-    width: 1, height: 1, videoId: vid,
-    playerVars: { autoplay: 0, controls: 0, disablekb: 1, playsinline: 1 },
+function preloadVideos() {
+  const host = document.getElementById("preloadHost");
+  Object.keys(clips).forEach(key => {
+    if (preloadedVideos[key]) return;
+    const el = document.createElement("video");
+    el.preload = "auto";
+    el.playsInline = true;
+    el.muted = true;
+    el.src = clipUrl(key);
+    preloadedVideos[key] = el;
+    host.appendChild(el);
+    try { el.load(); } catch(e) {}
   });
 }
-function rampMusic(player, from, to, ms, onDone) {
-  const start = performance.now();
-  musicRamp = { cancel: false };
-  const mine = musicRamp;
-  (function step(now) {
-    if (mine.cancel) return;
-    const t = Math.min(1, (now - start) / ms);
-    try { player.setVolume(Math.round(from + (to - from) * t)); } catch(e) {}
-    if (t < 1) requestAnimationFrame(step);
-    else { musicRamp = null; onDone && onDone(); }
-  })(performance.now());
+
+function applyVideoMuteState() {
+  v.forEach(el => { el.muted = forceMutedVideos; });
+  Object.values(preloadedVideos).forEach(el => { el.muted = true; });
 }
+
+function prepareVideoAudioForPlay(el) {
+  if (IS_IOS_WEBKIT && !forceMutedVideos && el !== cur()) {
+    el.dataset.mobileSafariAudioHandoff = "1";
+    el.muted = true;
+    el.volume = 0;
+    return;
+  }
+  delete el.dataset.mobileSafariAudioHandoff;
+  el.muted = forceMutedVideos;
+}
+
+function playVideo(el) {
+  prepareVideoAudioForPlay(el);
+  try {
+    const playPromise = el.play();
+    if (playPromise && playPromise.catch) {
+      playPromise.catch(() => {
+        forceMutedVideos = true;
+        applyVideoMuteState();
+        try { el.play().catch(()=>{}); } catch(e) {}
+      });
+    }
+  } catch(e) {
+    forceMutedVideos = true;
+    applyVideoMuteState();
+    try { el.play().catch(()=>{}); } catch(err) {}
+  }
+}
+
+function hasMobileSafariAudioHandoff(el) {
+  return el.dataset.mobileSafariAudioHandoff === "1";
+}
+
+function updateTransitionAudio(old, incoming, t) {
+  if (!hasMobileSafariAudioHandoff(incoming)) {
+    incoming.volume = t;
+    old.volume = 1 - t;
+    return;
+  }
+
+  if (t < 0.5) {
+    old.muted = forceMutedVideos;
+    old.volume = 1 - t / 0.5;
+    incoming.muted = true;
+    incoming.volume = 0;
+  } else {
+    old.volume = 0;
+    old.muted = true;
+    incoming.muted = forceMutedVideos;
+    incoming.volume = (t - 0.5) / 0.5;
+  }
+}
+
+function finishTransitionAudio(old, incoming) {
+  delete incoming.dataset.mobileSafariAudioHandoff;
+  old.volume = 1;
+  incoming.volume = 1;
+  old.muted = forceMutedVideos;
+  incoming.muted = forceMutedVideos;
+}
+
+// ---------- MP3/Web Audio music engine ----------
+let audioCtx = null;
+const musicBuffers = {};
+const musicLoads = {};
+let musicCity = null;      // city whose track is (or is fading) active
+let musicSource = null;
+let musicNodes = null;
+let musicStopTimer = null;
+let musicRequestId = 0;
+
+const NEUTRAL_HIGHPASS_HZ = 20;
+const TINNY_HIGHPASS_HZ = 900;
+const NEUTRAL_LOWPASS_HZ = 20000;
+const TINNY_LOWPASS_HZ = 2600;
+
+function getAudioContext() {
+  if (audioCtx) return audioCtx;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  audioCtx = new Ctx();
+  return audioCtx;
+}
+
+function unlockAudio() {
+  const ctx = getAudioContext();
+  if (ctx && ctx.state === "suspended") ctx.resume().catch(()=>{});
+}
+
+function decodeAudio(ctx, data) {
+  return new Promise((resolve, reject) => {
+    const maybePromise = ctx.decodeAudioData(data, resolve, reject);
+    if (maybePromise && maybePromise.then) maybePromise.then(resolve).catch(reject);
+  });
+}
+
+function loadMusicBuffer(cityKey) {
+  if (musicBuffers[cityKey]) return Promise.resolve(musicBuffers[cityKey]);
+  if (musicLoads[cityKey]) return musicLoads[cityKey];
+  const ctx = getAudioContext();
+  if (!ctx || !music[cityKey]) return Promise.reject(new Error("Audio unavailable"));
+  musicLoads[cityKey] = fetch(music[cityKey])
+    .then(r => {
+      if (!r.ok) throw new Error(`Could not load ${music[cityKey]}`);
+      return r.arrayBuffer();
+    })
+    .then(data => decodeAudio(ctx, data))
+    .then(buffer => {
+      musicBuffers[cityKey] = buffer;
+      return buffer;
+    })
+    .catch(err => {
+      delete musicLoads[cityKey];
+      console.warn(err);
+      throw err;
+    });
+  return musicLoads[cityKey];
+}
+
+function preloadMusic() {
+  ["karachi","hawaii","sf","lisbon"].forEach(k => loadMusicBuffer(k).catch(()=>{}));
+}
+
+function setAudioParam(param, value, timeConstant = 0.03) {
+  if (!audioCtx || !param) return;
+  const now = audioCtx.currentTime;
+  param.cancelScheduledValues(now);
+  param.setTargetAtTime(value, now, timeConstant);
+}
+
+function setAudioParamNow(param, value) {
+  if (!audioCtx || !param) return;
+  const now = audioCtx.currentTime;
+  param.cancelScheduledValues(now);
+  param.setValueAtTime(value, now);
+}
+
+function holdAudioParam(param) {
+  if (!audioCtx || !param) return;
+  const now = audioCtx.currentTime;
+  if (param.cancelAndHoldAtTime) param.cancelAndHoldAtTime(now);
+  else {
+    const value = param.value;
+    param.cancelScheduledValues(now);
+    param.setValueAtTime(value, now);
+  }
+}
+
+function createPanner(ctx) {
+  if (ctx.createStereoPanner) {
+    const node = ctx.createStereoPanner();
+    return {
+      node,
+      setPan(value, immediate = false) {
+        (immediate ? setAudioParamNow : setAudioParam)(node.pan, value);
+      },
+    };
+  }
+  const node = ctx.createPanner();
+  node.panningModel = "equalpower";
+  return {
+    node,
+    setPan(value) {
+      const x = Math.max(-1, Math.min(1, value));
+      if (node.positionX) {
+        setAudioParam(node.positionX, x);
+        setAudioParam(node.positionY, 0);
+        setAudioParam(node.positionZ, 1 - Math.abs(x));
+      } else {
+        node.setPosition(x, 0, 1 - Math.abs(x));
+      }
+    },
+  };
+}
+
+function applyMusicTone(pan, highpassHz, lowpassHz, immediate = false) {
+  if (!musicNodes) return;
+  const setter = immediate ? setAudioParamNow : setAudioParam;
+  musicNodes.panner.setPan(pan, immediate);
+  setter(musicNodes.highpass.frequency, highpassHz);
+  setter(musicNodes.lowpass.frequency, lowpassHz);
+}
+
+function stopMusicNow() {
+  musicRequestId++;
+  clearTimeout(musicStopTimer);
+  musicStopTimer = null;
+  if (musicSource) {
+    try { musicSource.onended = null; musicSource.stop(); } catch(e) {}
+  }
+  musicSource = null;
+  musicNodes = null;
+  musicCity = null;
+}
+
 // Start a city's track (fades in). Triggered when the tunnel->city arrival
 // transition STARTS (and on back-navigation directly into a city).
-function musicStart(cityKey) {
-  if (!ytReady) return;
-  const p = ytPlayers[cityKey];
-  if (!p || !p.playVideo) return;
-  if (musicCity === cityKey) return;          // already playing this city's track
-  if (musicRamp) musicRamp.cancel = true;
-  if (musicCity && ytPlayers[musicCity]) {
-    try { ytPlayers[musicCity].pauseVideo(); } catch(e) {}
-  }
+function musicStart(cityKey, entrance = "normal") {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  unlockAudio();
+  if (musicCity === cityKey && musicSource) return; // already playing this city's track
+  stopMusicNow();
   musicCity = cityKey;
-  try { p.setVolume(0); p.seekTo(0, true); p.playVideo(); } catch(e) {}
-  rampMusic(p, 0, 100, MUSIC_FADE_MS);
+  const requestId = ++musicRequestId;
+  loadMusicBuffer(cityKey).then(buffer => {
+    if (requestId !== musicRequestId || musicCity !== cityKey) return;
+    const source = ctx.createBufferSource();
+    const highpass = ctx.createBiquadFilter();
+    const lowpass = ctx.createBiquadFilter();
+    const panner = createPanner(ctx);
+    const envelopeGain = ctx.createGain();
+    const mainGain = ctx.createGain();
+
+    source.buffer = buffer;
+    highpass.type = "highpass";
+    lowpass.type = "lowpass";
+    envelopeGain.gain.setValueAtTime(1, ctx.currentTime);
+    mainGain.gain.setValueAtTime(0, ctx.currentTime);
+    highpass.frequency.setValueAtTime(NEUTRAL_HIGHPASS_HZ, ctx.currentTime);
+    lowpass.frequency.setValueAtTime(NEUTRAL_LOWPASS_HZ, ctx.currentTime);
+
+    source.connect(highpass);
+    highpass.connect(lowpass);
+    lowpass.connect(panner.node);
+    panner.node.connect(envelopeGain);
+    envelopeGain.connect(mainGain);
+    mainGain.connect(ctx.destination);
+
+    musicSource = source;
+    musicNodes = { mainGain, envelopeGain, highpass, lowpass, panner };
+    if (entrance === "arrival") applyMusicTone(-1, TINNY_HIGHPASS_HZ, TINNY_LOWPASS_HZ, true);
+    else applyMusicTone(0, NEUTRAL_HIGHPASS_HZ, NEUTRAL_LOWPASS_HZ, true);
+
+    source.onended = () => {
+      if (musicSource === source) {
+        musicSource = null;
+        musicNodes = null;
+        musicCity = null;
+      }
+    };
+    source.start(0);
+    mainGain.gain.linearRampToValueAtTime(1, ctx.currentTime + MUSIC_FADE_MS / 1000);
+  }).catch(()=>{ if (requestId === musicRequestId) stopMusicNow(); });
 }
+
 // Hard stop with a short fade (used only for back-navigation away from a city).
 function musicStop() {
-  if (!musicCity) return;
-  const p = ytPlayers[musicCity];
+  if (!musicCity || !musicNodes || !audioCtx) { stopMusicNow(); return; }
+  const source = musicSource;
+  const nodes = musicNodes;
   musicCity = null;
-  if (!p) return;
-  if (musicRamp) musicRamp.cancel = true;
-  rampMusic(p, (function(){ try { return p.getVolume(); } catch(e){ return 100; } })(), 0, 900,
-    () => { try { p.pauseVideo(); } catch(e) {} });
+  musicRequestId++;
+  clearTimeout(musicStopTimer);
+  holdAudioParam(nodes.mainGain.gain);
+  nodes.mainGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.9);
+  musicStopTimer = setTimeout(() => {
+    if (musicSource === source) stopMusicNow();
+  }, 950);
 }
-// Departure envelope, driven by the city->tunnel transition's playback progress:
-//   0%..50%  : pan center -> full left (YouTube iframes cannot be panned by the
-//              Web Audio API, so this phase currently holds volume steady; with
-//              direct audio files a StereoPannerNode would ramp pan here)
-//   50%..100%: volume fades linearly 100 -> 0
-//   100%     : track paused.
-function musicDepartureEnvelope(progress) {
-  if (!musicCity) return;
-  const p = ytPlayers[musicCity];
-  if (!p) return;
-  if (musicRamp) { musicRamp.cancel = true; musicRamp = null; }
+
+// Arrival envelope, driven by the tunnel->city transition's playback progress:
+//   0%..50%  : pan full left -> center, and open the distant/tinny filter
+//   50%..100%: hold normal center audio.
+function musicArrivalEnvelope(progress) {
+  if (!musicCity || !musicNodes) return;
   if (progress < 0.5) {
-    try { p.setVolume(100); } catch(e) {}     // pan phase (see note above)
-  } else if (progress < 1) {
-    const v = Math.round(100 * (1 - (progress - 0.5) / 0.5));
-    try { p.setVolume(v); } catch(e) {}
+    const t = progress / 0.5;
+    applyMusicTone(
+      -1 + t,
+      TINNY_HIGHPASS_HZ + (NEUTRAL_HIGHPASS_HZ - TINNY_HIGHPASS_HZ) * t,
+      TINNY_LOWPASS_HZ + (NEUTRAL_LOWPASS_HZ - TINNY_LOWPASS_HZ) * t
+    );
   } else {
-    const done = musicCity; musicCity = null;
-    try { ytPlayers[done].setVolume(0); ytPlayers[done].pauseVideo(); } catch(e) {}
+    applyMusicTone(0, NEUTRAL_HIGHPASS_HZ, NEUTRAL_LOWPASS_HZ);
+  }
+}
+
+// Departure envelope, driven by the city->tunnel transition's playback progress:
+//   0%..50%  : pan center -> full left, and narrow the EQ into a distant/tinny band
+//   50%..100%: volume fades linearly 100 -> 0, with the pan/filter held
+//   100%     : track stopped.
+function musicDepartureEnvelope(progress) {
+  if (!musicCity || !musicNodes) return;
+  if (progress < 0.5) {
+    const t = progress / 0.5;
+    setAudioParam(musicNodes.envelopeGain.gain, 1);
+    applyMusicTone(
+      -t,
+      NEUTRAL_HIGHPASS_HZ + (TINNY_HIGHPASS_HZ - NEUTRAL_HIGHPASS_HZ) * t,
+      NEUTRAL_LOWPASS_HZ + (TINNY_LOWPASS_HZ - NEUTRAL_LOWPASS_HZ) * t
+    );
+  } else if (progress < 1) {
+    const t = (progress - 0.5) / 0.5;
+    applyMusicTone(-1, TINNY_HIGHPASS_HZ, TINNY_LOWPASS_HZ);
+    setAudioParam(musicNodes.envelopeGain.gain, 1 - t);
+  } else {
+    stopMusicNow();
   }
 }
 // ------------------------------------------
@@ -264,7 +505,7 @@ function updateHud() {
 function load(el, i) {
   el.onended = null;
   el.loop = false;
-  el.src = CDN + fileOf(i);
+  el.src = clipUrl(segs[i].clip);
   const t = trimOf(i).start || 0;
   if (t > 0) {
     el.addEventListener("loadedmetadata", function seekOnce() {
@@ -291,12 +532,13 @@ function wipeTo(el, onDone) {
     const x = from + (to - from) * t;
     setMask(el, x);
     blurbar.style.left = (x - BAR/2) + "px";
-    el.volume = t; old.volume = 1 - t;
+    updateTransitionAudio(old, el, t);
     if (t < 1) requestAnimationFrame(frame);
     else {
       blurbar.style.display = "none";
       clearMask(el);
-      old.pause(); old.style.opacity = 0; old.volume = 1; el.volume = 1;
+      old.pause(); old.style.opacity = 0;
+      finishTransitionAudio(old, el);
       active = 1 - active;
       busy = false;
       onDone && onDone();
@@ -315,11 +557,12 @@ function fadeTo(el, onDone) {
   const start = performance.now();
   (function ramp(now){
     const t = Math.min(1,(now-start)/900);
-    el.volume = t; old.volume = 1 - t;
+    updateTransitionAudio(old, el, t);
     if (t<1) requestAnimationFrame(ramp);
   })(performance.now());
   setTimeout(() => {
-    old.pause(); old.style.opacity = 0; old.volume = 1; el.volume = 1;
+    old.pause(); old.style.opacity = 0;
+    finishTransitionAudio(old, el);
     el.style.transition = "";
     active = 1 - active;
     busy = false;
@@ -335,20 +578,23 @@ function isArrival(i)   { return segs[i] && segs[i].type === "trans" && segs[i+1
 function isDeparture(i) { return segs[i] && segs[i].type === "trans" && segs[i+1] && segs[i+1].type === "tunnel"; }
 
 function wipeToSegment(i) {
+  if (isDeparture(segIndex) && i !== segIndex) musicDepartureEnvelope(1);
+  if (isArrival(segIndex) && i !== segIndex) musicArrivalEnvelope(1);
   segIndex = i;
   const el = idle();
   load(el, i);
-  el.play().catch(()=>{});
+  playVideo(el);
   updateHud();
-  if (isArrival(i)) musicStart(segs[i+1].clip);   // music begins with the arrival clip
+  if (isArrival(i)) musicStart(segs[i+1].clip, "arrival");   // music begins with the arrival clip
   wipeTo(el);
 }
 
 function goForward() {
+  unlockAudio();
   if (busy) return;
   if (mode === "start") {
     mode = "playing";
-    cur().play().catch(()=>{});
+    playVideo(cur());
     updateHud();
     musicStart(segs[0].clip);
     return;
@@ -365,6 +611,7 @@ function goForward() {
 }
 
 function goBack() {
+  unlockAudio();
   if (busy || mode === "start") return;
   const cityIdx = [];
   segs.forEach((s,i)=>{ if (s.type==="city") cityIdx.push(i); });
@@ -377,7 +624,7 @@ function goBack() {
   segIndex = target;
   const el = idle();
   load(el, segIndex);
-  el.play().catch(()=>{});
+  playVideo(el);
   updateHud();
   fadeTo(el, () => { musicStart(segs[segIndex].clip); });
 }
@@ -393,7 +640,7 @@ function scheduler() {
         if (segs[segIndex].type === "city") {
           const nel = idle();
           load(nel, segIndex);
-          nel.play().catch(()=>{});
+          playVideo(nel);
           wipeTo(nel);      // same city: music keeps playing untouched
         } else if (segIndex < segs.length - 1) {
           wipeToSegment(segIndex + 1);
@@ -407,14 +654,23 @@ function scheduler() {
 function paintProgress() {
   const el = cur();
   let frac = 0;
+  let musicFrac = 0;
+  let arrivalFrac = 0;
   if (mode !== "start" && el.duration && isFinite(el.duration)) {
     const tr = trimOf(segIndex);
     const a = tr.start || 0, b = Math.max(a + 0.1, el.duration - (tr.end || 0));
     frac = Math.min(1, Math.max(0, (el.currentTime - a) / (b - a)));
+    if (isDeparture(segIndex)) {
+      const musicEnd = Math.max(a + 0.1, b - WIPE_MS / 1000 - 0.05);
+      musicFrac = Math.min(1, Math.max(0, (el.currentTime - a) / (musicEnd - a)));
+    } else if (isArrival(segIndex)) {
+      arrivalFrac = frac;
+    }
   }
   const d = dotEls[segIndex];
   if (d) d.firstChild.style.width = (d.classList.contains("done") ? 100 : frac * 100) + "%";
-  if (isDeparture(segIndex) && mode === "playing") musicDepartureEnvelope(frac);
+  if (isDeparture(segIndex) && mode === "playing") musicDepartureEnvelope(musicFrac);
+  if (isArrival(segIndex) && mode === "playing") musicArrivalEnvelope(arrivalFrac);
   requestAnimationFrame(paintProgress);
 }
 
@@ -428,7 +684,7 @@ clipOrder.forEach((key) => {
   row.innerHTML = `<div class="nm">${c.label}</div>
     <label>start <input type="number" min="0" step="0.1" value="${trims[key].start}" data-k="${key}" data-f="start"></label>
     <label>end <input type="number" min="0" step="0.1" value="${trims[key].end}" data-k="${key}" data-f="end"></label>`
-    + (isCity ? `<input class="music" type="text" placeholder="YouTube URL for ${c.label} music" value="${music[key] || ""}" data-mk="${key}">` : "");
+    + (isCity ? `<input class="music" type="text" placeholder="MP3 path for ${c.label} music" value="${music[key] || ""}" data-mk="${key}">` : "");
   rowsEl.appendChild(row);
 });
 rowsEl.addEventListener("input", (e) => {
@@ -436,11 +692,9 @@ rowsEl.addEventListener("input", (e) => {
   if (k && f) trims[k][f] = Math.max(0, parseFloat(e.target.value) || 0);
   if (mk) {
     music[mk] = e.target.value.trim();
-    const vid = ytId(music[mk]);
-    if (ytReady && vid) {
-      if (ytPlayers[mk]) { try { ytPlayers[mk].cueVideoById(vid); } catch(e) {} }
-      else makePlayer(mk, vid);
-    }
+    delete musicBuffers[mk];
+    delete musicLoads[mk];
+    loadMusicBuffer(mk).catch(()=>{});
   }
 });
 document.getElementById("copyBtn").addEventListener("click", () => {
@@ -456,7 +710,15 @@ function togglePane() {
   tweaks.style.display = paneOpen ? "block" : "none";
 }
 
+function handleScreenTap(clientX) {
+  if (paneOpen) return;
+  if (clientX >= window.innerWidth / 2) goForward();
+  else goBack();
+}
+
 // boot
+preloadVideos();
+preloadMusic();
 load(cur(), 0);
 cur().pause();
 cur().style.opacity = 1;
@@ -470,6 +732,12 @@ document.addEventListener("keydown", (e) => {
   if (e.repeat) return;
   if (e.key === "ArrowLeft" || e.key === "Backspace") { e.preventDefault(); goBack(); }
   else if (e.key === " " || e.key === "ArrowRight")   { e.preventDefault(); goForward(); }
+});
+
+document.addEventListener("pointerup", (e) => {
+  if (e.pointerType === "mouse" || !e.isPrimary) return;
+  if (e.target.closest && e.target.closest("#tweaks")) return;
+  handleScreenTap(e.clientX);
 });
 
 let hudTimer = null;
