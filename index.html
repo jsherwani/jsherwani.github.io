@@ -147,6 +147,10 @@ let busy = false;
 const WIPE_MS = 1100;
 const BAR = 200;
 const MUSIC_FADE_MS = 2500;
+const MUSIC_SETTLE_DELAY_MS = 15000;
+const MUSIC_SETTLE_FADE_MS = 2500;
+const MUSIC_SETTLED_GAIN = 0.25;
+const MUSIC_RESTORE_MS = 900;
 const DEPARTURE_PAN_EXTRA_SEC = 2;
 const MIN_DEPARTURE_FADE_SEC = 0.75;
 const JOURNEY_END_MS = 5000;
@@ -397,6 +401,27 @@ function scheduleMainGainRamp(nodes, to, ms, from = currentMainGain(nodes)) {
   nodes.mainGainRamp = { from: startValue, to: endValue, start: now, duration };
 }
 
+function clearMusicSettleTimer(nodes = musicNodes) {
+  if (nodes && nodes.settleTimer) {
+    clearTimeout(nodes.settleTimer);
+    nodes.settleTimer = null;
+  }
+}
+
+function scheduleMusicSettle(nodes = musicNodes) {
+  if (!nodes) return;
+  clearMusicSettleTimer(nodes);
+  nodes.settleTimer = setTimeout(() => {
+    if (musicNodes === nodes) scheduleMainGainRamp(nodes, MUSIC_SETTLED_GAIN, MUSIC_SETTLE_FADE_MS);
+  }, MUSIC_SETTLE_DELAY_MS);
+}
+
+function restoreMusicForDeparture() {
+  if (!musicNodes) return;
+  clearMusicSettleTimer(musicNodes);
+  scheduleMainGainRamp(musicNodes, 1, MUSIC_RESTORE_MS);
+}
+
 function createPanner(ctx) {
   if (ctx.createStereoPanner) {
     const node = ctx.createStereoPanner();
@@ -436,6 +461,7 @@ function stopMusicNow() {
   musicRequestId++;
   clearTimeout(musicStopTimer);
   musicStopTimer = null;
+  clearMusicSettleTimer(musicNodes);
   if (musicSource) {
     try { musicSource.onended = null; musicSource.stop(); } catch(e) {}
   }
@@ -484,6 +510,7 @@ function musicStart(cityKey, entrance = "normal") {
     musicNodes = {
       mainGain, envelopeGain, highpass, lowpass, panner,
       mainGainRamp: { from: initialMainGain, to: initialMainGain, start: ctx.currentTime, duration: 0 },
+      settleTimer: null,
     };
     if (entrance === "arrival") applyMusicTone(1, TINNY_HIGHPASS_HZ, TINNY_LOWPASS_HZ, true);
     else applyMusicTone(0, NEUTRAL_HIGHPASS_HZ, NEUTRAL_LOWPASS_HZ, true);
@@ -497,6 +524,7 @@ function musicStart(cityKey, entrance = "normal") {
     };
     source.start(0);
     if (!instantStart) scheduleMainGainRamp(musicNodes, 1, MUSIC_FADE_MS, 0);
+    scheduleMusicSettle(musicNodes);
   }).catch(()=>{ if (requestId === musicRequestId) stopMusicNow(); });
 }
 
@@ -511,6 +539,7 @@ function musicFadeOut(ms) {
   const nodes = musicNodes;
   musicRequestId++;
   clearTimeout(musicStopTimer);
+  clearMusicSettleTimer(nodes);
   scheduleMainGainRamp(nodes, 0, ms);
   musicStopTimer = setTimeout(() => {
     if (musicSource === source) stopMusicNow();
@@ -659,6 +688,7 @@ function isDeparture(i) { return segs[i] && segs[i].type === "trans" && segs[i+1
 function wipeToSegment(i) {
   const outgoingIndex = segIndex;
   if (isArrival(outgoingIndex) && i !== outgoingIndex) musicArrivalEnvelope(1);
+  if (isDeparture(i)) restoreMusicForDeparture();
   segIndex = i;
   if (segs[i].type === "city") beginCityVideoAudio(i);
   const el = idle();
