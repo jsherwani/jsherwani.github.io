@@ -157,6 +157,13 @@ function idle() { return v[1 - active]; }
 function trimOf(i) { return trims[segs[i].clip]; }
 function fileOf(i) { return clips[segs[i].clip].file; }
 function clipUrl(key) { return CDN + clips[key].file; }
+function segmentProgress(i, el) {
+  const tr = trimOf(i);
+  const a = tr.start || 0;
+  const duration = el && el.duration && isFinite(el.duration) ? el.duration : a + 0.1;
+  const b = Math.max(a + 0.1, duration - (tr.end || 0));
+  return clamp01((((el && el.currentTime) || 0) - a) / (b - a));
+}
 
 const preloadedVideos = {};
 let forceMutedVideos = false;
@@ -214,30 +221,39 @@ function hasMobileSafariAudioHandoff(el) {
   return el.dataset.mobileSafariAudioHandoff === "1";
 }
 
+function clamp01(value) {
+  return Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
+}
+
+function setMediaVolume(el, value) {
+  el.volume = clamp01(value);
+}
+
 function updateTransitionAudio(old, incoming, t) {
+  t = clamp01(t);
   if (!hasMobileSafariAudioHandoff(incoming)) {
-    incoming.volume = t;
-    old.volume = 1 - t;
+    setMediaVolume(incoming, t);
+    setMediaVolume(old, 1 - t);
     return;
   }
 
   if (t < 0.5) {
     old.muted = forceMutedVideos;
-    old.volume = 1 - t / 0.5;
+    setMediaVolume(old, 1 - t / 0.5);
     incoming.muted = true;
-    incoming.volume = 0;
+    setMediaVolume(incoming, 0);
   } else {
-    old.volume = 0;
+    setMediaVolume(old, 0);
     old.muted = true;
     incoming.muted = forceMutedVideos;
-    incoming.volume = (t - 0.5) / 0.5;
+    setMediaVolume(incoming, (t - 0.5) / 0.5);
   }
 }
 
 function finishTransitionAudio(old, incoming) {
   delete incoming.dataset.mobileSafariAudioHandoff;
-  old.volume = 1;
-  incoming.volume = 1;
+  setMediaVolume(old, 1);
+  setMediaVolume(incoming, 1);
   old.muted = forceMutedVideos;
   incoming.muted = forceMutedVideos;
 }
@@ -517,7 +533,7 @@ function load(el, i) {
   }
 }
 
-function wipeTo(el, onDone) {
+function wipeTo(el, onDone, outgoingIndex = segIndex) {
   busy = true;
   const W = window.innerWidth;
   const start = performance.now();
@@ -533,10 +549,12 @@ function wipeTo(el, onDone) {
     setMask(el, x);
     blurbar.style.left = (x - BAR/2) + "px";
     updateTransitionAudio(old, el, t);
+    if (isDeparture(outgoingIndex)) musicDepartureEnvelope(segmentProgress(outgoingIndex, old));
     if (t < 1) requestAnimationFrame(frame);
     else {
       blurbar.style.display = "none";
       clearMask(el);
+      if (isDeparture(outgoingIndex)) musicDepartureEnvelope(1);
       old.pause(); old.style.opacity = 0;
       finishTransitionAudio(old, el);
       active = 1 - active;
@@ -578,15 +596,15 @@ function isArrival(i)   { return segs[i] && segs[i].type === "trans" && segs[i+1
 function isDeparture(i) { return segs[i] && segs[i].type === "trans" && segs[i+1] && segs[i+1].type === "tunnel"; }
 
 function wipeToSegment(i) {
-  if (isDeparture(segIndex) && i !== segIndex) musicDepartureEnvelope(1);
-  if (isArrival(segIndex) && i !== segIndex) musicArrivalEnvelope(1);
+  const outgoingIndex = segIndex;
+  if (isArrival(outgoingIndex) && i !== outgoingIndex) musicArrivalEnvelope(1);
   segIndex = i;
   const el = idle();
   load(el, i);
   playVideo(el);
   updateHud();
   if (isArrival(i)) musicStart(segs[i+1].clip, "arrival");   // music begins with the arrival clip
-  wipeTo(el);
+  wipeTo(el, null, outgoingIndex);
 }
 
 function goForward() {
@@ -657,12 +675,9 @@ function paintProgress() {
   let musicFrac = 0;
   let arrivalFrac = 0;
   if (mode !== "start" && el.duration && isFinite(el.duration)) {
-    const tr = trimOf(segIndex);
-    const a = tr.start || 0, b = Math.max(a + 0.1, el.duration - (tr.end || 0));
-    frac = Math.min(1, Math.max(0, (el.currentTime - a) / (b - a)));
+    frac = segmentProgress(segIndex, el);
     if (isDeparture(segIndex)) {
-      const musicEnd = Math.max(a + 0.1, b - WIPE_MS / 1000 - 0.05);
-      musicFrac = Math.min(1, Math.max(0, (el.currentTime - a) / (musicEnd - a)));
+      musicFrac = frac;
     } else if (isArrival(segIndex)) {
       arrivalFrac = frac;
     }
