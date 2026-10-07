@@ -1,0 +1,10 @@
+
+
+# Private credentials: never commit
+secrets
+secrets/
+.env*
+!.env.example
+service-account*.json
+*-firebase-adminsdk-*.json
+.local/
